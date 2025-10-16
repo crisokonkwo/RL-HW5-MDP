@@ -110,27 +110,20 @@ def get_cliff_mdp(state_list, state_rowcol, rowcol_state, grid):
 # [left, up, down, right]
 def get_optimal_policy(state_list, state_rowcol, rowcol_state, grid):
     mdp = get_cliff_mdp(state_list, state_rowcol, rowcol_state, grid)
-    pi = np.zeros(len(mdp["S"]), dtype=int)
+    pi = np.full(len(state_list), -1, dtype=int)  # -1 means undefined
+    s_index = mdp["s_index"]
+    
     print("Optimal policy (0=left,1=up,2=down,3=right):")
     path = [(3,0),(2,0)]
     path += [(2,c) for c in range(1,12)]
     path += [(3,11)]
-    for i in range(len(path)-1):
-        r,c = path[i]
-        next_r, next_c = path[i+1]
+    for (r,c), (nr,nc) in zip(path[:-1], path[1:]):
         s = rowcol_state[(r,c)]
-        s_idx = mdp["s_index"][s]
-        if next_r == r and next_c == c-1:
-            a = 0
-        elif next_r == r-1 and next_c == c:
-            a = 1
-        elif next_r == r+1 and next_c == c:
-            a = 2
-        elif next_r == r and next_c == c+1:
-            a = 3
-        else:
-            raise ValueError("Invalid path step")
-        pi[s_idx] = a
+        if   (nr,nc) == (r,   c-1): a = 0
+        elif (nr,nc) == (r-1, c  ): a = 1
+        elif (nr,nc) == (r+1, c  ): a = 2
+        else:                        a = 3
+        pi[s_index[s]] = a
         print(f" --> state {s} at ({r},{c}) -> action {a}")
     
     return pi
@@ -144,11 +137,12 @@ def get_pi_e_greedy(pi, epsilon):
     for s in range(num_S):
         for a in range(num_A):
             if a == pi[s]:
-                pi_epsilon[s, a] = 1.0 - epsilon + (epsilon / num_A)
+                pi_epsilon[s, a] = 1.0 - epsilon
             else:
-                pi_epsilon[s, a] = (epsilon / num_A)
-    
+                pi_epsilon[s, a] = epsilon
+    print("Epsilon-greedy policy matrix (rows=states, cols=actions):")
     print(pi_epsilon)
+    
     return pi_epsilon
 
 # Given an MDP and a policy pi, return the induced Markov chain's
@@ -156,17 +150,28 @@ def get_pi_e_greedy(pi, epsilon):
 # P_pi has shape (S, S) and R_pi has shape (S,)
 def get_P_R(MDP, pi):
     P, R = MDP["P"], MDP["R"]
-    S = P.shape[1]
-    P_pi = np.zeros((S, S))
-    R_pi = np.zeros(S)
-    for s in range(S):
-        a = pi[s]
-        P_pi[s, :] = P[s, a, :]
-        R_pi[s] = R[s, a, :].dot(P[s, a, :])
+    S = P.shape[0]
     
+    # If pi is given as a 1D array of action indices, convert to one-hot
+    if pi.ndim == 1:
+        policy_matrix = np.zeros((S, 4))
+        # Convert pi to one-hot encoding
+        policy_matrix[np.arange(S), pi] = 1.0
+        pi = policy_matrix
+    
+    # P_pi(s,s') = sum_a pi(s,a) * P(s,a,s')
+    P_pi = (pi[:, :, None] * P).sum(axis=1)
+
+    # Expected immediate reward per (s,a): r_sa = sum_{s'} P * R
+    R_sa = (P * R).sum(axis=2)
+
+    # R_pi(s) = sum_a pi(s,a) * r_sa(s,a)
+    R_pi = (pi * R_sa).sum(axis=1)
+
     return P_pi, R_pi
 
 def get_v(P, R, gamma):
+    # Solve v = (I - gamma * P_pi)^{-1} * R_pi
     I = np.eye(P.shape[0])
     A = I - gamma * P
     
@@ -176,7 +181,40 @@ def get_v(P, R, gamma):
 # Generate a full trajectory under the policy pi.
 # The trajectory must start in init_state and end in terminal
 def gen_episode(MDP, pi, num_actions, init_state, terminal):
-    pass
+    P, R = MDP["P"], MDP["R"]
+    s_index = MDP["s_index"]; index_s = MDP["index_s"]
+    traj = []
+    s = init_state
+    t = 0
+    print(pi)
+    
+    while s != terminal and t < num_actions:
+        i = s_index[s]
+        if pi.ndim == 1:
+            a_probs = pi[i]  # deterministic policy
+        else:
+            a_probs = np.random.choice(4, p=pi[i])  # stochastic policy
+        
+        # print(f"state {s} at {MDP['s_index'][s]}: action probs {a_probs}")
+        # print(f"  taking action {a_probs}")
+
+        probs = P[a_probs, i]
+        # print(f"  next state probs: {probs}")
+
+        next_s_idx = int(np.random.choice(len(s_index), p=probs))
+        next_s = index_s[next_s_idx]
+
+        r = float(R[a_probs, i, next_s_idx])
+
+        traj.append((s, a_probs, r, next_s))
+        
+        s = next_s
+        
+        t += 1
+    # print(f"Terminal state {s} reached after {t} steps.")
+    # print("Trajectory:")
+    # print(traj)
+    return traj
 
 
 if __name__ == "__main__":
@@ -214,7 +252,34 @@ if __name__ == "__main__":
     cliff_mdp = get_cliff_mdp(state_list, state_rowcol, rowcol_state, grid)
 
     pi = get_optimal_policy(state_list, state_rowcol, rowcol_state, grid)
+    print("Optimal policy array:", pi)
 
     # epsilon-greedy policies
     pi_01 = get_pi_e_greedy(pi, 0.1)
     pi_02 = get_pi_e_greedy(pi, 0.2)
+    
+
+    # get infinite-horizon value function for optimal policy
+    P_pi, R_pi = get_P_R(cliff_mdp, pi)
+    v = get_v(P_pi, R_pi, gamma)
+    
+    print("Optimal policy value function:")
+    for s in cliff_mdp["S"]:
+        print(f"  state {s:2d} at {state_rowcol[s]}: v={v[cliff_mdp['s_index'][s]]:.2f}")
+        
+    
+    # get infinite-horizon value function for epsilon-greedy policies
+    v_01 = get_v(*get_P_R(cliff_mdp, pi_01), gamma)
+    v_02 = get_v(*get_P_R(cliff_mdp, pi_02), gamma)
+    
+    print("Epsilon=0.1 policy value function:")
+    for s in cliff_mdp["S"]:
+        print(f" --> state {s:2d} at {state_rowcol[s]}: v={v_01[cliff_mdp['s_index'][s]]:.2f}")
+
+    print("Epsilon=0.2 policy value function:")
+    for s in cliff_mdp["S"]:
+        print(f" --> state {s:2d} at {state_rowcol[s]}: v={v_02[cliff_mdp['s_index'][s]]:.2f}")
+    
+    for _ in range(1000):
+        # print("\n--- Generating episode with optimal policy ---")
+        traj = gen_episode(cliff_mdp, pi, 1000, cliff_mdp["start"], cliff_mdp["goal"])
