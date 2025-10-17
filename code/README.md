@@ -36,7 +36,9 @@ The code outputs:
 - $\epsilon$-greedy policies have lower returns due to exploration
 - Higher $\epsilon$ leads to more exploration and potentially lower returns with 10% or 20% randomness
 - Value functions reflect the safety-reward tradeoff i.e. the expected discounted return
-$$ V_{\pi}(s) = (I - \gamma P_{\pi})^{-1}R_{\pi}(s).$$
+
+$$ V_{\pi}(s) = (I - \gamma P_{\pi})^{-1}R_{\pi}(s)$$
+
 - Average discounted return over 1000 episodes
 $$G = \frac{1}{1000} \sum_{t=0}^{T-1} \gamma^{t}r_t$$
 
