@@ -40,6 +40,7 @@ The code outputs:
 $$ V_{\pi}(s) = (I - \gamma P_{\pi})^{-1}R_{\pi}(s)$$
 
 - Average discounted return over 1000 episodes
+
 $$G = \frac{1}{1000} \sum_{t=0}^{T-1} \gamma^{t}r_t$$
 
 ## Usage
